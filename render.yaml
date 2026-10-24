@@ -1,0 +1,18 @@
+# One-click deploy on Render (render.com): New + > Blueprint > pick this repository.
+services:
+  - type: web
+    name: knowledge-hub
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: DEMO_MODE
+        value: "true"
+      - key: AI_PROVIDER
+        value: none          # change to openai or compatible once you have an API key
+      - key: AI_API_KEY
+        sync: false          # entered in the Render dashboard, never committed
