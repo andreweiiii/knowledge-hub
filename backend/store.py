@@ -7,7 +7,8 @@ import sqlite3
 import threading
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from collections import Counter
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -47,6 +48,8 @@ MIGRATIONS = [
     ("questions", "client_id", "TEXT"),
     ("questions", "confidence", "REAL"),
     ("questions", "mode", "TEXT"),
+    ("questions", "latency_ms", "INTEGER"),
+    ("questions", "sources", "TEXT"),  # JSON list of cited document names, best first
 ]
 
 
@@ -189,11 +192,13 @@ class Store:
         return vector, entry[2]
 
     # ---------- questions ----------
-    def add_question(self, question: str, answer: str, confidence: float, mode: str, client_id: str | None) -> None:
+    def add_question(self, question: str, answer: str, confidence: float, mode: str, client_id: str | None,
+                     latency_ms: int | None = None, sources: list[str] | None = None) -> None:
         with self.connect() as conn:
             conn.execute(
-                "INSERT INTO questions (question, answer, created_at, client_id, confidence, mode) VALUES (?, ?, ?, ?, ?, ?)",
-                (question, answer, utc_now(), client_id, confidence, mode),
+                "INSERT INTO questions (question, answer, created_at, client_id, confidence, mode, latency_ms, sources) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (question, answer, utc_now(), client_id, confidence, mode, latency_ms, json.dumps(sources or [])),
             )
 
     def history(self, client_id: str | None, include_unowned: bool, limit: int = 20) -> list[dict[str, Any]]:
@@ -223,7 +228,43 @@ class Store:
             members = conn.execute(
                 "SELECT COUNT(DISTINCT client_id) FROM questions WHERE client_id IS NOT NULL AND created_at >= datetime('now', '-30 days')"
             ).fetchone()[0]
+            latencies = [r[0] for r in conn.execute(
+                "SELECT latency_ms FROM questions WHERE latency_ms IS NOT NULL ORDER BY id DESC LIMIT 200"
+            )]
+            day_rows = conn.execute(
+                "SELECT substr(created_at, 1, 10) AS day, "
+                "SUM(CASE WHEN mode = 'no_match' THEN 0 ELSE 1 END) AS answered, "
+                "SUM(CASE WHEN mode = 'no_match' THEN 1 ELSE 0 END) AS unanswered "
+                "FROM questions WHERE created_at >= date('now', '-13 days') GROUP BY day"
+            ).fetchall()
+            source_rows = [r[0] for r in conn.execute(
+                "SELECT sources FROM questions WHERE sources IS NOT NULL AND sources != '[]' ORDER BY id DESC LIMIT 500"
+            )]
+            category = {r["name"]: r["category"] for r in conn.execute("SELECT name, category FROM documents")}
         hit_rate = round(100 * sum(1 for c in recent if c >= 0.5) / len(recent), 1) if recent else None
+
+        # Last 14 days, oldest first, including days with no questions.
+        by_day = {r["day"]: (r["answered"], r["unanswered"]) for r in day_rows}
+        today = datetime.now(timezone.utc).date()
+        daily = []
+        for offset in range(13, -1, -1):
+            day = (today - timedelta(days=offset)).isoformat()
+            answered, unanswered = by_day.get(day, (0, 0))
+            daily.append({"date": day, "answered": answered, "unanswered": unanswered})
+
+        # A document is "cited" when it is the top source of an answer or appears among its sources.
+        cited: Counter[str] = Counter()
+        for raw in source_rows:
+            try:
+                for name in dict.fromkeys(json.loads(raw)):  # each document once per answer
+                    cited[name] += 1
+            except (ValueError, TypeError):
+                continue
+        top_documents = [
+            {"document": name, "category": category.get(name, "Removed"), "citations": count}
+            for name, count in cited.most_common(5)
+        ]
+        latency = round(sorted(latencies)[len(latencies) // 2]) if latencies else None
         avg = round(sum(recent) / len(recent), 3) if recent else None
         return {
             "documents": documents,
@@ -233,6 +274,9 @@ class Store:
             "retrieval_hit_rate": hit_rate,
             "average_confidence": avg,
             "active_members": members or None,
+            "median_response_ms": latency,
+            "daily_questions": daily,
+            "top_documents": top_documents,
         }
 
 

@@ -223,6 +223,7 @@ def create_app(settings: Settings | None = None, ai: AIClient | None = None) -> 
     @app.post("/api/chat")
     def chat(body: ChatRequest, request: Request, x_client_id: str | None = Header(default=None)) -> dict[str, Any]:
         limiter.check(f"chat:{client_ip(request)}", settings.chat_per_hour)
+        started = time.perf_counter()
         client_id = valid_client(x_client_id)
         question = body.question.strip()
         if any(p.search(question) for p in SECRET_PATTERNS):
@@ -238,7 +239,7 @@ def create_app(settings: Settings | None = None, ai: AIClient | None = None) -> 
             raise HTTPException(status_code=404, detail="No knowledge has been indexed yet. Upload a document first.")
         if not sources:
             answer = "I couldn't find anything about that in the indexed documents. Try different keywords or upload a document that covers it."
-            store.add_question(question, answer, 0.0, "no_match", client_id)
+            store.add_question(question, answer, 0.0, "no_match", client_id, int((time.perf_counter() - started) * 1000), [])
             return {"answer": answer, "sources": [], "confidence": 0, "filtered": False, "mode": "no_match"}
 
         confidence = round(sum(s["score"] for s in sources[:3]) / min(3, len(sources)), 3)
@@ -260,7 +261,8 @@ def create_app(settings: Settings | None = None, ai: AIClient | None = None) -> 
             mode = "retrieval_only"
             answer = passages_answer(sources, f"The AI model is unavailable right now ({notice}) Here are the most relevant passages instead:")
 
-        store.add_question(question, answer, confidence, mode, client_id)
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        store.add_question(question, answer, confidence, mode, client_id, elapsed_ms, [s["document"] for s in sources])
         return {
             "answer": answer,
             "sources": [
@@ -277,6 +279,7 @@ def create_app(settings: Settings | None = None, ai: AIClient | None = None) -> 
             "filtered": False,
             "mode": mode,
             "retrieval": method,
+            "response_ms": elapsed_ms,
         }
 
     @app.get("/api/history")

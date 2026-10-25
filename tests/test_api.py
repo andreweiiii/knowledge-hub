@@ -122,6 +122,19 @@ class RetrievalOnlyTests(unittest.TestCase):
         self.assertEqual(stats["questions"], 1)
         self.assertNotIn("answer_acceptance", stats)
 
+    def test_analytics_are_computed_from_real_questions(self):
+        self.client.post("/api/chat", json={"question": "What documents are needed for travel reimbursement?"})
+        self.client.post("/api/chat", json={"question": "travel expense claim deadline"})
+        self.client.post("/api/chat", json={"question": "zebra xylophone quantum"})
+        stats = self.client.get("/api/stats").json()
+        self.assertEqual(len(stats["daily_questions"]), 14)
+        today = stats["daily_questions"][-1]
+        self.assertEqual((today["answered"], today["unanswered"]), (2, 1))
+        top = stats["top_documents"][0]
+        self.assertEqual(top["document"], "Employee Travel & Expense Policy")
+        self.assertEqual(top["citations"], 2)
+        self.assertIsNotNone(stats["median_response_ms"])
+
     def test_upload_markdown_then_delete(self):
         content = b"# Parking\n\nVisitors park in lot B and must register at reception."
         doc = self.client.post("/api/documents", files={"file": ("parking-rules.md", content, "text/markdown")}).json()

@@ -64,7 +64,7 @@ Interactive docs: http://127.0.0.1:8000/docs
 python -m unittest discover -s tests -v
 ```
 
-23 tests cover parsing (PDF, DOCX with tables, Markdown), chunking, keyword ranking, semantic search with a fake AI provider, model switching, fallback when the AI is down, demo-mode limits and per-visitor history.
+24 tests cover parsing (PDF, DOCX with tables, Markdown), chunking, keyword ranking, semantic search with a fake AI provider, model switching, fallback when the AI is down, demo-mode limits, per-visitor history and the analytics numbers.
 
 ## Project layout
 
