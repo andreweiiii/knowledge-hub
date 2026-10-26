@@ -1,0 +1,25 @@
+# Render's free plan puts the demo to sleep after 15 minutes without traffic,
+# and waking it takes about a minute. This pings it every 10 minutes so
+# visitors from the portfolio get an instant page. One always-on service uses
+# about 744 of the 750 free instance hours Render gives each month.
+name: Keep demo awake
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Ping /api/health
+        run: |
+          for attempt in 1 2 3; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 90 https://knowledge-hub-lm7l.onrender.com/api/health || true)
+            echo "attempt $attempt: HTTP $code"
+            [ "$code" = "200" ] && exit 0
+            sleep 10
+          done
+          echo "::warning::Demo did not answer with 200 after 3 attempts"
